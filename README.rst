@@ -50,12 +50,11 @@ Getting the MetaCyc PADMET file
 
 You also should install the MetaCyc_XX.X.padmet (the version number of 
 `MetaCyc <https://metacyc.org/>`__  is replaced with XX.X), and then you should update your 
-config.txt files for each study. This is the way to 
-getting a MetaCyc_XX.padmet file: Firstly, download the flat files of 
-`MetaCyc <https://metacyc.org/>`__ in DAT format at the
-`https://biocyc.org/download.shtml <https://biocyc.org/download.shtml>`__ webpage. Secondly, 
-put all the downloaded DAT files in a directory (it is named FLAT_DIR here). Thirdly run this 
-command:
+config.txt files for each study. This is the way to get a MetaCyc_XX.padmet file: 
+Firstly, download the flat files of `MetaCyc <https://metacyc.org/>`__ in DAT format at the
+`https://biocyc.org/download.shtml <https://biocyc.org/download.shtml>`__ webpage. 
+Secondly, put all the downloaded DAT files in a directory (it is named FLAT_DIR here). 
+Thirdly run this command:
 
 .. code:: sh
 
@@ -78,3 +77,7 @@ Usage
  metabolic_reconstruction.py [-h] -i INPUT -o OUTPUT --tax TAXFILE --padmet_ref PATH_TO_PADMET_REF --ptsc PTSC --ptsi PTSI [--annot ANNOT] [--egg_path EGG_PATH] [--bak_path BAK_PATH]
                              [-c CPUS] [-k TO_KEEP] [-q]
 
+-k flag can be used to save some intermediary files from Prokka and Bakta (listed blow). 
+To keep some specific files, mention their extension separated by ",", following the structure below : 
+	Prokka : .ecn,.err,.ffn,.fixed*,.fsa,.gff,.log,.sqn,.tbl,.val,.faa
+	Bakta : .embl,.faa,.ffn,.fna,.gff3,.hypotheticals.faa,.hypotheticals.tsv,.json,.log,.png,.svg,.tsv

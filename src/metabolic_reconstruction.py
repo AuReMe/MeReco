@@ -1,10 +1,26 @@
-#!/home/genouest/dyliss/norobert/miniconda3/envs/prolific/bin python3
+#!/usr/bin/env python3.7
 # -*- coding: utf-8 -*-
 
 """
-Created on Mon Apr 14 2025
+Description:
+    Large-scale metabolic reconstruction of bacterial genomes.
+    
+::
 
-@author: norobert
+    usage:
+        padmet metabolic_reconstruction [-h] -i INPUT -o OUTPUT --tax TAXFILE --padmet_ref PATH_TO_PADMET_REF --ptsc PTSC --ptsi PTSI [--annot ANNOT] [--egg_path EGG_PATH] [--bak_path BAK_PATH] [-c CPUS] [-k TO_KEEP]
+        -h, --help                      Show this help message and exit
+        -i INPUT, --input INPUT         Path to the folder where the genomes are
+        -o OUTPUT, --output OUTPUT      Path to the folder where you want to put the results in
+        --tax TAXFILE                   Path to the taxon file (.tsv)
+        --padmet_ref PATH_TO_PADMET_REF Path to the reference database in Padmet format.
+        --ptsc PTSC                     Path to the root folder (for construction of Singularity bridge, necessary to access distant files).
+        --ptsi PTSI                     Path to the singularity image of mpwt to use.
+        --annot ANNOT                   Annotation tool(s) to use between 'prokka' (default), 'eggnog' and 'bakta'. If several annotation tools to use, write them comma-separated.
+        --egg_path EGG_PATH             Path to the Eggnog database, mandatory if you want to use eggnog as annotation tool.
+        --bak_path BAK_PATH             Path to the Bakta database, mandatory if you want to use bakta as annotation tool.
+        -c CPUS, --cpus CPUS            Give the number of available CPUs
+        -k TO_KEEP, --keep TO_KEEP      Give the file formats to keep - comma-separated list, '.' included
 """
 
 import os
@@ -12,33 +28,36 @@ import glob
 import argparse
 import gzip
 import pandas as pd
-from pathlib import Path
 import numpy as np
 import time
+import docopt
 
 # FUNCTIONS ---------------------------------------------------------------------------------
 
 ## UTILS ------------------------------------------------------------------------------------
+def command_help():
+    """
+    Show help for analysis command.
+    """
+    print(docopt.docopt(__doc__))
+
 def parser() : 
-    parser = argparse.ArgumentParser(description="Prolipipe pipeline for large-scale assessment of metabolic profiles on bacteria focusing on specific pathways.")
+    parser = argparse.ArgumentParser(description="Large-scale metabolic reconstruction of bacterial genomes.")
     
     ## arguments 
     parser.add_argument("-i", "--input", required=True, dest="input",help="Path to the folder where the genomes are")
     parser.add_argument("-o", "--output", required=True, dest="output",help="Path to the folder where you want to put the results in")
-    parser.add_argument("--tax", required=True, dest="taxfile",help="path of the taxon file (.tsv)")
+    parser.add_argument("--tax", required=True, dest="taxfile",help="Path to the taxon file (.tsv)")
     parser.add_argument("--padmet_ref", required=True, dest="path_to_padmet_ref", help="Path to the reference database in Padmet format.")
-    parser.add_argument("--ptsc", required=True, dest="ptsc", help="Path to root folder (for construction of Singularity bridge, necessary to access distant files).")
+    parser.add_argument("--ptsc", required=True, dest="ptsc", help="Path to the root folder (for construction of Singularity bridge, necessary to access distant files).")
     parser.add_argument("--ptsi", required=True, dest="ptsi", help="Path to the singularity image of mpwt to use.")
     
     ## options
     parser.add_argument("--annot", dest="annot", default="prokka", help="Annotation tool(s) to use between 'prokka' (default), 'eggnog' and 'bakta'. If several annotation tools to use, write them comma-separated.")
-    parser.add_argument("--egg_path",dest="egg_path",help="Path to the eggnog database, mandatory if you want to use eggnog as annotation tool.")
-    parser.add_argument("--bak_path",dest="bak_path",help="Path to the bakta database, mandatory if you want to use bakta as annotation tool.")
-    parser.add_argument("-c","--cpus", dest="cpus", default=20, help="Give the number of available CPUs")
-    parser.add_argument("-k","--keep", dest="to_keep", default="", help="Give the file formats to keep - comma-separated list, '.' included")
-
-    ## flags    
-    parser.add_argument("-q", "--quick", action="store_true", dest="quick", help="Bypass most of the computation if results files are already generated")
+    parser.add_argument("--egg_path",dest="egg_path",help="Path to the Eggnog database, mandatory if you want to use eggnog as annotation tool.")
+    parser.add_argument("--bak_path",dest="bak_path",help="Path to the Bakta database, mandatory if you want to use bakta as annotation tool.")
+    parser.add_argument("-c","--cpus", dest="cpus", default=2, help="Give the number of available CPUs")
+    parser.add_argument("-k","--keep", dest="to_keep", default="", help="""Give the file formats to keep - comma-separated list, '.' included""")
 
     return parser.parse_args()
 
@@ -46,11 +65,16 @@ def parser() :
 def my_basename(file):
     """
         Shorter version to get a basename (file name without path or extension)
+        Input : 
+            file (str) : full path to the file  
     """
     return os.path.splitext(os.path.basename(file))[0]
 
 
 def missing_or_empty(file_path):
+    """
+    Check from a file path if a file doesn't exist there or is missing 
+    """
     return not os.path.exists(file_path) or os.stat(file_path).st_size == 0
 
 
@@ -141,21 +165,53 @@ def mkdir(path) :
             print(f"An error occurred (mkdir): {e}")
 
 
-def remove(list_path):
-    for path in list_path:
-        p = Path(path)
-        if p.exists():
-            if p.is_file() or p.is_symlink():
-                p.unlink()  ## delete a file or link
-            elif p.is_dir():
-                for sub in p.glob("**/*"):  ## delete recursively
-                    if sub.is_file() or sub.is_symlink():
-                        sub.unlink()
-                    elif sub.is_dir():
-                        os.rmdir(sub)  ## delete empty dir
-                os.rmdir(p)  ## delete main dir 
-
 ## KEY-FUNCTIONS -----------------------------------------------------------------------------
+
+
+def bakta_annotation(input_dir, output_path, options):
+    """
+    Bakta annotation step : from a fasta file, generate a GBK file of annotated genome. Iterated on all genomes
+    Inputs : 
+        input_dir (str) : path to genomes to process
+        output_path (str) : path to Prolipipe's output 
+        options (parser) : arguments from parser
+    Output : 
+        processed (list) : list of processed genomes' names
+    """
+    print("Bakta annotation launched.\n")
+    path_to_bak = options.bak_path
+    mkdir(os.path.join(output_path, 'bakta'))
+    processed = pd.DataFrame(columns = ['genome', "bakta"])
+
+    for genome_name in os.listdir(input_dir) :
+        output = (os.path.join(output_path, "bakta", genome_name))
+        final_file = os.path.join(output, genome_name + ".gbk")
+
+        if missing_or_empty(final_file):
+            ## annotate genomes 
+            mkdir(output)
+            fasta = (os.path.join(input_dir, genome_name, genome_name + ".fasta"))
+            command = f"bakta --db {path_to_bak} {fasta} --output {output} --prefix {genome_name} --compliant --force --threads {options.cpus}"
+            bigprint(command)
+            os.system(command)
+            ## --compliant      Force Genbank/ENA/DDJB compliance
+            ## --force          Force overwriting existing output folder
+
+            ## removing unused files
+            unused_files = set([".embl", ".faa", ".ffn", ".fna", ".gff3", ".hypotheticals.faa", ".hypotheticals.tsv", ".json", ".log", ".png", ".svg", ".tsv"]) - set(options.to_keep.split(","))   
+            for extension in unused_files :
+                file_to_delete = os.path.join(output, genome_name + extension)
+                if os.path.exists(file_to_delete) : 
+                    os.remove(file_to_delete)
+
+            ## rename and count processed genomes
+            if os.path.exists(os.path.join(output, genome_name + ".gbff")):
+                move(os.path.join(output, genome_name + ".gbff"), final_file)
+            if os.path.exists(final_file):
+                processed.loc[len(processed)] = [genome_name, "OK"]
+    
+    return processed
+
 
 def prokka_annotation(input_dir, output_path, options) : 
     """
@@ -176,14 +232,19 @@ def prokka_annotation(input_dir, output_path, options) :
 
         if missing_or_empty(prok_file + ".gbk"):
             ## launch annotation
-            command_pro = f"prokka {input_dir}{genome_name}/{genome_name}.fasta --outdir {output_path}prokka/{genome_name} --prefix {genome_name} --compliant --force --cpus {options.cpus}"
+            fasta = os.path.join(input_dir, genome_name, f'{genome_name}.fasta')
+            outdir = os.path.join(output_path, "prokka", genome_name)
+            command_pro = f"prokka {fasta} --outdir {outdir} --prefix {genome_name} --compliant --force --cpus {options.cpus}"
             ## --compliant       Force Genbank/ENA/DDJB compliance
             bigprint(command_pro)
             os.system(command_pro)
             
             ## removing unused files
             unused_files=set([".ecn", ".err", ".ffn", ".fixed*", ".fsa", ".gff", ".log", ".sqn", ".tbl", ".val", ".faa "]) - set(options.to_keep.split(","))
-            remove([f"{prok_file}{extension}" for extension in unused_files])
+            for extension in unused_files :
+                file_to_delete = f"{prok_file}{extension}" 
+                if os.path.exists(file_to_delete) : 
+                    os.remove(file_to_delete)
 
             ## rename and count processed genomes
             if os.path.exists(prok_file + ".gbf"):
@@ -234,48 +295,6 @@ def eggnog_annotation(input_dir, output_path, options):
                 processed.loc[len(processed)] = [genome_name, "OK"]
     
     return processed 
-
-def bakta_annotation(input_dir, output_path, options):
-    """
-    Bakta annotation step : from a fasta file, generate a GBK file of annotated genome. Iterated on all genomes
-    Inputs : 
-        input_dir (str) : path to genomes to process
-        output_path (str) : path to Prolipipe's output 
-        options (parser) : arguments from parser
-    Output : 
-        processed (list) : list of processed genomes' names
-    """
-    print("Bakta annotation launched.\n")
-    path_to_bak = options.bak_path
-    mkdir(os.path.join(output_path, 'bakta'))
-    processed = pd.DataFrame(columns = ['genome', "bakta"])
-
-    for genome_name in os.listdir(input_dir) :
-        output = (os.path.join(output_path, "bakta", genome_name))
-        final_file = os.path.join(output, genome_name + ".gbk")
-
-        if missing_or_empty(final_file):
-            ## annotate genomes 
-            mkdir(output)
-            fasta = (os.path.join(input_dir, genome_name, genome_name + ".fasta"))
-            
-            command = f"bakta --db {path_to_bak} {fasta} --output {output} --prefix {genome_name} --compliant --force --threads {options.cpus}"
-            bigprint(command)
-            os.system(command)
-            ## --compliant      Force Genbank/ENA/DDJB compliance
-            ## --force          Force overwriting existing output folder
-
-            ## removing unused files
-            unused_files = set([".embl", ".faa", ".ffn", ".fna", ".gff3", ".hypotheticals.faa", ".hypotheticals.ftsv", ".json", ".log", ".png", ".svg", ".tsv"]) - set(options.to_keep.split(","))   
-            remove([os.path.join(output, genome_name + extension) for extension in unused_files])
-
-            ## rename and count processed genomes
-            if os.path.exists(os.path.join(output, genome_name + ".gbff")):
-                move(os.path.join(output, genome_name + ".gbff"), final_file)
-            if os.path.exists(final_file):
-                processed.loc[len(processed)] = [genome_name, "OK"]
-    
-    return processed
 
 
 def create_taxon_file(annotation, genomes, options):
@@ -475,6 +494,12 @@ def check_files(step, output_path, df_summary, annotation) :
         Check presence of output files after a given step of the workflow ; 
         Save progression in a summary tsv file, identify processable files
         for downstream analysis.
+        Input : 
+            step (str) : name of the workflow step
+            output_path (str) : path to output directory
+            df_summary (pd.Dataframe) : dataframe summarizing metabolic 
+                                        reconstruction's progress
+            annotation (list) : list of annotation tools requested
     """
     summary_file = os.path.join(output_path, "metabolic_rec_summary.tsv") 
     
@@ -482,7 +507,7 @@ def check_files(step, output_path, df_summary, annotation) :
     if step == "merge" : 
         df_summary.to_csv(summary_file, sep = "\t", index = False) 
         processed_strains = len(df_summary[df_summary['merged_padmet'] == 'OK'])
-        print(f"\nWorkflow is over, {processed_strains}/{len(df_summary)} genomes are completely processed.\n")
+        print(f"\nWorkflow over, {processed_strains}/{len(df_summary)} genomes are completely processed.\n")
         print(f"Please check {summary_file} for more detailed results on file presence :\n{df_summary}")
         return 
     
@@ -509,15 +534,29 @@ def check_files(step, output_path, df_summary, annotation) :
 
     return df_summary, genomes_names
 
+
 def rename(file) : 
     """
-        Rename file by converting error-generating characters into "-" 
+        Modify a string corresponding to a filename by converting 
+        error-generating characters into "-" 
+        Input : 
+            file (str) : name of the file 
     """
     for old, new in {'.': '-', ':': '-', '__': '-', '-_': '-'}.items():
         file = file.replace(old, new)
     return file
 
+
 def check_taxfile(options) :
+    """
+        Check function relying on taxon file. Rename every file name read in it by 
+        removing error-generating characters, check if the corresponding file exists 
+        and rename it accordingly if needed  
+        Input : 
+            options (argparse argument set) : 
+                - taxfile (str) : path of the taxa file
+                - genomes (str) : path to genomes directory
+    """
     taxfile = options.taxfile
     genomes = options.input
     if not os.path.exists(taxfile) : 
@@ -541,8 +580,6 @@ def check_taxfile(options) :
             fasta = glob.glob(os.path.join(dir, "*.fasta"))
            
             try :
-                # print(f"{fasta[0]}\n\t{os.path.join(dir, f'{new_filename}.fasta')}")
-                # print("\n", dir, "\n\t", os.path.join(genomes, new_filename))
                 move(fasta[0], os.path.join(dir, f"{new_filename}.fasta"))
                 move(dir, os.path.join(genomes, new_filename))
             except : 
@@ -581,7 +618,7 @@ def main() :
             genomes_processed = bakta_annotation(input_dir, output_path, options)
         else :
             continue
-        time_taken =  time.time() - start
+        time_taken = time.time() - start
         print(f"INFO : {annotool} annotation took {time_taken // 3600} hour(s) {(time_taken % 3600) // 60} minute(s) {time_taken % 60} seconds")
         
         df_summary = df_summary.merge(genomes_processed, on = "genome", how = "outer")
@@ -594,14 +631,14 @@ def main() :
     create_taxon_file(annotation, genomes_names, options)
     start = time.time()
     run_mpwt(output_path, annotation, genomes_names, options)
-    time_taken =  time.time() - start
+    time_taken = time.time() - start
     print(f"INFO : Mpwt step took {time_taken // 3600} hour(s) {(time_taken % 3600) // 60} minute(s) {time_taken % 60} seconds")
         
     ## checking if mpwt ran correctly for all annotools, identify convertible genomes and convert them using padmet
     df_summary, genomes_names = check_files("mpwt", output_path, df_summary, annotation)
     start = time.time()
     convert2padmet(output_path, annotation, genomes_names, options)
-    time_taken =  time.time() - start
+    time_taken = time.time() - start
     print(f"INFO : Conversion to padmet took {time_taken // 3600} hour(s) {(time_taken % 3600) // 60} minute(s) {time_taken % 60} seconds")
     
     ## checking if padmet ran correctly for all annotools, save progression
@@ -619,10 +656,9 @@ def main() :
     
     check_files("merge", output_path, df_summary, annotation)
     
-       
+
 
 if __name__ == "__main__":
-    ## input : /home/genouest/dyliss/norobert/to_scratch/strains/genomes_dl_from_NCBI/genomes_cirm-bia/cirm_downloaded
-    ## output : /scratch/norobert/prolific_project/run2
-    main()
-    # /home/genouest/dyliss/norobert/miniconda3/envs/prolific/bin/python bin/metabolic_reconstruction.py --input /scratch/norobert/strains/genomes_dl_from_NCBI/genomes_cirm-bia/cirm_downloaded/ --tax /scratch/norobert/prolific_project/taxons/taxons_run2_3.tsv --output /scratch/norobert/prolific_project/run2/ --cpus 2 --padmet_ref /scratch/norobert/metacyc_27.0.padmet --ptsc /scratch/norobert/ --ptsi mpwt_27.sif --annot bakta,prokka,eggnog --bak_path /scratch/norobert/dbs/db_bakta/ --egg_path /db/eggnog/5.0.2/
+    command_help()
+    # main()
+    

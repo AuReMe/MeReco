@@ -1,0 +1,3 @@
+import MeReco.src.__main__ as __main__ 
+
+__version__='0.1.0'

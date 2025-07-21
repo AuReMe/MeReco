@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mereco"
+dynamic = ["version"]
+authors = [{name = "mereco", email = "gem-aureme@inria.fr"}]
+readme = "README.rst"
+description = "MeReco : large-scale assessment of metabolic profiles on bacteria focusing on specific pathways."
+license = {text = "GPL-3.0-or-later"}
+
+dependencies = ['pandas',
+        'glob2',
+        'pathlib'
+]
+	     
+
+[project.scripts]
+mereco = "src.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/AuReMe/MeReco"
+
+[tool.setuptools]
+packages = ['mereco']
+
+[tool.setuptools.dynamic]
+version = { attr = "mereco.__version__" }
+dependencies = {file = ["requirements.txt"]}
